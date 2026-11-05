@@ -1,0 +1,19 @@
+{
+  "name": "star66-translater",
+  "version": "1.0.0",
+  "description": "star66 translater - Voice & words translator in any language in the world",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve ."
+  },
+  "keywords": [
+    "translator",
+    "voice-translator",
+    "speech-to-text",
+    "text-to-speech",
+    "star66",
+    "multilingual"
+  ],
+  "author": "vasuyadav66",
+  "license": "MIT"
+}

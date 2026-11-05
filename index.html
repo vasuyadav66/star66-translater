@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>star66 translater - Voice & Text Translation in Any Language</title>
+  <meta name="description" content="star66 translater - Real-time voice and text translator supporting 130+ world languages with speech recognition, speech synthesis, and two-way conversation mode.">
+  <meta name="theme-color" content="#0c0d1e">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✨</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Dynamic Starry Cosmic Background -->
+  <div class="star-background" id="starBackground"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand-section">
+        <div class="logo-badge" title="star66 translater">★</div>
+        <div>
+          <h1 class="brand-title">
+            <span class="star-badge">★</span>
+            <span class="highlight">star66 translater</span>
+          </h1>
+          <p class="tagline">Translate voice & words in any language in the world</p>
+        </div>
+      </div>
+
+      <div class="header-controls">
+        <button class="nav-btn" id="soundFxBtn" title="Toggle audio feedback tones">
+          <span id="soundFxIcon">🔔</span> Sound FX
+        </button>
+        <button class="nav-btn" id="historyToggleBtn" title="View translation history">
+          <span>📜</span> History (<span id="historyCount">0</span>)
+        </button>
+        <button class="nav-btn" id="themeToggleBtn" title="Toggle Light/Dark Theme">
+          <span id="themeIcon">☀️</span> Theme
+        </button>
+      </div>
+    </header>
+
+    <!-- Mode Switcher Tabs -->
+    <div class="view-tabs" role="tablist">
+      <button class="tab-btn active" id="tabStandard" role="tab" aria-selected="true">
+        <span>🌐</span> Voice & Words
+      </button>
+      <button class="tab-btn" id="tabConversation" role="tab" aria-selected="false">
+        <span>🎙️</span> Two-Way Conversation
+      </button>
+    </div>
+
+    <!-- STANDARD TRANSLATOR VIEW -->
+    <main id="standardTranslatorView">
+      <!-- Language Selector Bar -->
+      <section class="language-selector-bar">
+        <!-- Source Language Picker -->
+        <div class="lang-picker-group">
+          <button class="lang-dropdown-btn" id="srcLangBtn" aria-label="Select source language">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <span class="lang-flag" id="srcLangFlag">✨</span>
+              <span id="srcLangName">Auto Detect</span>
+            </span>
+            <span class="caret">▼</span>
+          </button>
+          
+          <div class="quick-chips" id="srcQuickChips">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+
+        <!-- Swap Languages Button -->
+        <button class="swap-btn" id="swapLangBtn" title="Swap languages (Ctrl+S)">
+          ⇄
+        </button>
+
+        <!-- Target Language Picker -->
+        <div class="lang-picker-group">
+          <button class="lang-dropdown-btn" id="tgtLangBtn" aria-label="Select target language">
+            <span style="display:flex; align-items:center; gap:8px;">
+              <span class="lang-flag" id="tgtLangFlag">🇪🇸</span>
+              <span id="tgtLangName">Spanish</span>
+            </span>
+            <span class="caret">▼</span>
+          </button>
+
+          <div class="quick-chips" id="tgtQuickChips">
+            <!-- Rendered by JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Center Voice Control -->
+      <section class="center-voice-control">
+        <div class="mic-hero-container">
+          <button class="mic-hero-btn" id="mainMicBtn" title="Click or Press Spacebar to Speak">
+            🎙️
+          </button>
+          <div class="mic-ripple-ring"></div>
+        </div>
+        <div class="voice-status-label" id="voiceStatusLabel">
+          <span class="status-dot"></span>
+          <span id="voiceStatusText">Click mic or press Space to speak in any language</span>
+        </div>
+      </section>
+
+      <!-- Translator Cards Grid -->
+      <section class="translator-grid">
+        <!-- Source Input Card -->
+        <div class="panel-card" id="srcPanelCard">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>Original Words</span>
+              <span class="badge" id="detectedLangBadge" style="display:none;">Detected</span>
+            </div>
+            <div class="panel-actions">
+              <button class="icon-btn" id="clearTextBtn" title="Clear text">✕</button>
+              <button class="icon-btn" id="pasteTextBtn" title="Paste from clipboard">📋</button>
+            </div>
+          </div>
+
+          <div class="panel-body">
+            <textarea 
+              class="source-textarea" 
+              id="sourceTextInput" 
+              placeholder="Speak using the microphone or type any words in any language..." 
+              spellcheck="false"></textarea>
+
+            <div class="interim-speech-box" id="interimSpeechBox">
+              Listening...
+            </div>
+
+            <!-- Waveform Canvas -->
+            <div class="canvas-visualizer-container" id="visualizerContainer">
+              <canvas id="audioVisualizer"></canvas>
+            </div>
+          </div>
+
+          <div class="panel-footer">
+            <div class="footer-stats" id="sourceWordCount">0 chars · 0 words</div>
+            <div class="footer-buttons">
+              <button class="action-btn" id="speakSourceBtn" title="Listen to original voice">
+                <span>🔊</span> Listen
+              </button>
+              <button class="action-btn" id="copySourceBtn" title="Copy original text">
+                <span>📑</span> Copy
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Target Output Card -->
+        <div class="panel-card" id="tgtPanelCard">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>Translated Words</span>
+              <span class="badge" id="tgtBadge">Voice & Text</span>
+            </div>
+            <div class="panel-actions">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-muted); cursor:pointer;">
+                <input type="checkbox" id="autoSpeakCheckbox" checked>
+                Auto-Speak Voice
+              </label>
+              <select id="voiceSpeedSelect" class="action-btn" style="padding: 4px 8px; font-size: 11px;" title="Voice Playback Speed">
+                <option value="0.8">0.8x</option>
+                <option value="1.0" selected>1.0x</option>
+                <option value="1.2">1.2x</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="panel-body">
+            <div class="translation-result" id="translationOutputText">
+              <span class="translation-placeholder">Translation will appear here in the chosen language...</span>
+            </div>
+            <div class="translation-phonetics" id="phoneticsDisplay"></div>
+          </div>
+
+          <div class="panel-footer">
+            <div class="footer-stats" id="targetWordCount">0 chars</div>
+            <div class="footer-buttons">
+              <button class="action-btn primary-btn" id="speakTargetBtn" title="Speak translation aloud (Voice Way)">
+                <span>▶ 🔊</span> Speak Voice
+              </button>
+              <button class="action-btn" id="copyTargetBtn" title="Copy translated words">
+                <span>📑</span> Copy
+              </button>
+              <button class="action-btn" id="downloadTransBtn" title="Download translation">
+                <span>💾</span>
+              </button>
+              <button class="action-btn" id="fullscreenBtn" title="Full Screen View">
+                <span>⛶</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quick Sample Phrases Bar -->
+      <section class="sample-phrases-bar">
+        <span class="phrase-label">Quick Phrases:</span>
+        <button class="phrase-chip" data-phrase="Hello, nice to meet you!">"Hello, nice to meet you!"</button>
+        <button class="phrase-chip" data-phrase="Where is the nearest train station?">"Where is the train station?"</button>
+        <button class="phrase-chip" data-phrase="Can you please help me?">"Can you please help me?"</button>
+        <button class="phrase-chip" data-phrase="How much does this cost?">"How much does this cost?"</button>
+        <button class="phrase-chip" data-phrase="Thank you very much for your help!">"Thank you very much!"</button>
+        <button class="phrase-chip" data-phrase="I would like to order delicious food.">"I would like to order food."</button>
+      </section>
+    </main>
+
+    <!-- TWO-WAY CONVERSATION MODE VIEW -->
+    <main id="conversationView" class="conversation-mode-container">
+      <div class="conversation-dialogue-window" id="conversationDialogue">
+        <div style="text-align:center; color:var(--text-dim); font-size:14px; margin:auto 0;" id="convEmptyState">
+          🎙️ Tap either microphone below to start a two-way live voice conversation.
+        </div>
+      </div>
+
+      <!-- Dual Mic Dock -->
+      <div class="conv-mic-dock">
+        <!-- Person A Speaker -->
+        <div class="conv-speaker-card">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:700;">Person A:</span>
+            <button class="action-btn" id="convLangABtn">
+              <span id="convLangAFlag">🇺🇸</span> <span id="convLangAName">English</span>
+            </button>
+          </div>
+          <button class="conv-speaker-btn speaker-a" id="convMicBtnA" title="Hold or Click to Speak as Person A">
+            🎙️
+          </button>
+          <div style="font-size:13px; color:var(--text-muted);" id="convStatusA">Tap to speak in English</div>
+        </div>
+
+        <!-- Person B Speaker -->
+        <div class="conv-speaker-card">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:700;">Person B:</span>
+            <button class="action-btn" id="convLangBBtn">
+              <span id="convLangBFlag">🇪🇸</span> <span id="convLangBName">Spanish</span>
+            </button>
+          </div>
+          <button class="conv-speaker-btn speaker-b" id="convMicBtnB" title="Hold or Click to Speak as Person B">
+            🎙️
+          </button>
+          <div style="font-size:13px; color:var(--text-muted);" id="convStatusB">Tap to speak in Spanish</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <div>
+        <strong>star66 translater</strong> &bull; Translates voice & words across 130+ languages worldwide
+      </div>
+      <div>
+        Designed for travelers, students, and global conversations &bull; Powered by Web Speech & Neural Translation
+      </div>
+    </footer>
+  </div>
+
+  <!-- Language Selection Modal -->
+  <div class="modal-overlay" id="langModalOverlay">
+    <div class="language-modal-content">
+      <div class="modal-header">
+        <div class="modal-title">
+          <span>🌐</span>
+          <span id="modalTitleText">Select Language</span>
+        </div>
+        <button class="icon-btn" id="closeLangModalBtn">✕</button>
+      </div>
+
+      <div class="modal-search-box">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="search-input" id="langSearchInput" placeholder="Search 130+ languages by name or native script...">
+      </div>
+
+      <div class="language-list-grid" id="modalLangListGrid">
+        <!-- Rendered by JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Translation History Drawer -->
+  <aside class="history-drawer" id="historyDrawer">
+    <div class="drawer-header">
+      <div style="font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px;">
+        <span>📜</span> History & Saved
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button class="action-btn" id="clearHistoryBtn" style="font-size:11px; padding:4px 8px;">Clear All</button>
+        <button class="icon-btn" id="closeHistoryBtn">✕</button>
+      </div>
+    </div>
+    <div class="history-items-container" id="historyItemsList">
+      <!-- Rendered by JS -->
+    </div>
+  </aside>
+
+  <!-- Fullscreen Modal Presentation -->
+  <div class="modal-overlay" id="fullscreenOverlay">
+    <div style="max-width:800px; width:90%; background:var(--card-bg); border:1px solid var(--card-border); border-radius:24px; padding:36px; text-align:center; display:flex; flex-direction:column; gap:20px; box-shadow:0 25px 80px rgba(0,0,0,0.8);">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:14px; text-transform:uppercase; letter-spacing:1px; color:#818cf8; font-weight:700;" id="fsTargetLangLabel">TRANSLATION</span>
+        <button class="icon-btn" id="closeFsBtn">✕</button>
+      </div>
+      <div id="fsTranslatedText" style="font-size:32px; font-weight:700; line-height:1.4; color:#ffffff;">
+        Translation text
+      </div>
+      <div id="fsSourceText" style="font-size:18px; color:var(--text-muted);">
+        Original text
+      </div>
+      <div style="display:flex; justify-content:center; gap:12px; margin-top:10px;">
+        <button class="action-btn primary-btn" id="fsSpeakBtn" style="padding:10px 24px; font-size:16px;">
+          <span>🔊</span> Speak Loudly
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast-notice" id="toastNotice">
+    <span id="toastIcon">✨</span>
+    <span id="toastText">Copied to clipboard</span>
+  </div>
+
+  <!-- Scripts -->
+  <script src="languages.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
