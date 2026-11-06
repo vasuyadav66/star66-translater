@@ -17,6 +17,13 @@
     audioContext: null,
     analyser: null,
     animFrameId: null,
+    mediaRecorder: null,
+    recordedChunks: [],
+    recordedAudioBlob: null,
+    recordedAudioUrl: null,
+    recordingTimerId: null,
+    recordingSeconds: 0,
+    isRecordedAudioPlaying: false,
     autoSpeak: true,
     soundFx: true,
     speechRate: 1.0,
@@ -67,6 +74,17 @@
 
     // Voice & Cards
     mainMicBtn: document.getElementById('mainMicBtn'),
+    mainMicIcon: document.getElementById('mainMicIcon'),
+    recordingTimer: document.getElementById('recordingTimer'),
+    recordedAudioBar: document.getElementById('recordedAudioBar'),
+    recordedAudioMeta: document.getElementById('recordedAudioMeta'),
+    playRecordedAudioBtn: document.getElementById('playRecordedAudioBtn'),
+    playRecordedAudioIcon: document.getElementById('playRecordedAudioIcon'),
+    playRecordedAudioText: document.getElementById('playRecordedAudioText'),
+    deleteRecordedAudioBtn: document.getElementById('deleteRecordedAudioBtn'),
+    recordedAudioElement: document.getElementById('recordedAudioElement'),
+    mainTranslateActionBtn: document.getElementById('mainTranslateActionBtn'),
+    mainTranslateActionText: document.getElementById('mainTranslateActionText'),
     voiceStatusLabel: document.getElementById('voiceStatusLabel'),
     voiceStatusText: document.getElementById('voiceStatusText'),
     srcPanelCard: document.getElementById('srcPanelCard'),
@@ -270,6 +288,10 @@
     el.tgtLangName.textContent = tgt.name;
     el.tgtLangFlag.textContent = tgt.flag;
 
+    if (el.mainTranslateActionText) {
+      el.mainTranslateActionText.textContent = `Translate Voice Now → ${tgt.name}`;
+    }
+
     const convA = getLanguage(state.convLangA);
     el.convLangAName.textContent = convA.name;
     el.convLangAFlag.textContent = convA.flag;
@@ -286,13 +308,17 @@
   function setSourceLanguage(code) {
     state.srcLang = code;
     updateLanguageButtons();
-    triggerTranslation();
+    triggerTranslation(true);
   }
 
   function setTargetLanguage(code) {
     state.tgtLang = code;
     updateLanguageButtons();
-    triggerTranslation();
+    const text = el.sourceTextInput.value.trim();
+    if (text) {
+      triggerTranslation(true);
+      showToast(`Translating into ${getLanguage(code).name}...`, '🌐');
+    }
   }
 
   // --- SWAP LANGUAGES ---
@@ -444,7 +470,7 @@
     }
   }
 
-  // --- SPEECH RECOGNITION (VOICE INPUT) ---
+  // --- SPEECH RECOGNITION & VOICE RECORDING ---
   let recognitionInstance = null;
 
   function setupSpeechRecognition() {
@@ -455,15 +481,12 @@
     }
 
     recognitionInstance = new SpeechRecognition();
-    recognitionInstance.continuous = false;
+    recognitionInstance.continuous = true;
     recognitionInstance.interimResults = true;
     recognitionInstance.maxAlternatives = 1;
 
     recognitionInstance.onstart = () => {
-      state.isRecording = true;
-      playChime('start');
-      updateMicUI(true);
-      startAudioVisualizer();
+      // Speech recognition active
     };
 
     recognitionInstance.onresult = (event) => {
@@ -480,15 +503,14 @@
 
       if (state.activeRecordingSource === 'main') {
         if (interim) {
-          el.interimSpeechBox.textContent = `Hearing: "${interim}"`;
+          el.interimSpeechBox.textContent = `Hearing words: "${interim}"`;
           el.interimSpeechBox.style.display = 'block';
         }
 
         if (final) {
           const current = el.sourceTextInput.value.trim();
           el.sourceTextInput.value = current ? `${current} ${final}` : final;
-          el.interimSpeechBox.style.display = 'none';
-          triggerTranslation(true);
+          updateWordCounts(el.sourceTextInput.value);
         }
       } else if (state.activeRecordingSource === 'convA') {
         if (final) {
@@ -502,81 +524,161 @@
     };
 
     recognitionInstance.onerror = (event) => {
-      console.warn('Speech recognition error:', event.error);
-      stopRecording();
+      console.warn('Speech recognition notice:', event.error);
       if (event.error === 'not-allowed') {
         showToast('Microphone permission blocked. Please allow mic in browser settings.', '⚠️');
-      } else if (event.error === 'no-speech') {
-        showToast('No speech detected. Please try again.', '🎙️');
+        stopRecording();
       }
+      // On 'no-speech', do not immediately abort in continuous mode
     };
 
     recognitionInstance.onend = () => {
-      stopRecording();
+      if (state.isRecording && state.activeRecordingSource === 'main') {
+        // Keep continuous recognition alive while user is recording
+        try {
+          recognitionInstance.start();
+        } catch (e) {}
+      }
     };
   }
 
   function startSpeechRecognition(sourceType = 'main', langCode = null) {
-    if (!recognitionInstance) {
-      showToast('Speech recognition not supported in this browser. Please use Chrome/Edge.', '⚠️');
-      return;
-    }
-
     if (state.isRecording) {
       stopRecording();
       return;
     }
 
     state.activeRecordingSource = sourceType;
-    let speechLocale = 'en-US';
+    state.isRecording = true;
+    playChime('start');
+    updateMicUI(true);
 
-    if (sourceType === 'main') {
-      const lang = getLanguage(state.srcLang);
-      speechLocale = lang.speech || 'en-US';
-    } else if (sourceType === 'convA') {
-      speechLocale = getLanguage(state.convLangA).speech || 'en-US';
-    } else if (sourceType === 'convB') {
-      speechLocale = getLanguage(state.convLangB).speech || 'es-ES';
+    // 1. Audio Stream, MediaRecorder & Waveform Visualizer
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      state.recordedChunks = [];
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        state.audioStream = stream;
+        startAudioVisualizerFromStream(stream);
+
+        try {
+          const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+          state.mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+          state.mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) state.recordedChunks.push(e.data);
+          };
+          state.mediaRecorder.onstop = () => {
+            const blobType = state.mediaRecorder ? state.mediaRecorder.mimeType || 'audio/webm' : 'audio/webm';
+            state.recordedAudioBlob = new Blob(state.recordedChunks, { type: blobType });
+            if (state.recordedAudioUrl) URL.revokeObjectURL(state.recordedAudioUrl);
+            state.recordedAudioUrl = URL.createObjectURL(state.recordedAudioBlob);
+            if (el.recordedAudioElement) el.recordedAudioElement.src = state.recordedAudioUrl;
+            if (el.recordedAudioBar) {
+              el.recordedAudioBar.style.display = 'flex';
+              const lang = getLanguage(state.srcLang);
+              el.recordedAudioMeta.textContent = `Recorded voice (${state.recordingSeconds}s) · Spoken in ${lang.name}`;
+            }
+          };
+          state.mediaRecorder.start(250);
+        } catch (mrErr) {
+          console.warn('MediaRecorder error:', mrErr);
+        }
+      }).catch(err => {
+        console.warn('Microphone permission error:', err);
+        showToast('Microphone access blocked. Please allow mic in browser settings.', '⚠️');
+        stopRecording();
+        return;
+      });
     }
 
-    recognitionInstance.lang = speechLocale;
+    // 2. Start Live Timer
+    state.recordingSeconds = 0;
+    if (el.recordingTimer) {
+      el.recordingTimer.textContent = '00:00';
+      el.recordingTimer.style.display = 'inline-block';
+    }
+    clearInterval(state.recordingTimerId);
+    state.recordingTimerId = setInterval(() => {
+      state.recordingSeconds++;
+      const mins = String(Math.floor(state.recordingSeconds / 60)).padStart(2, '0');
+      const secs = String(state.recordingSeconds % 60).padStart(2, '0');
+      if (el.recordingTimer) el.recordingTimer.textContent = `${mins}:${secs}`;
+    }, 1000);
 
-    try {
-      recognitionInstance.start();
-    } catch (e) {
-      console.warn('Recognition start exception:', e);
-      stopRecording();
+    // 3. Start Speech Recognition
+    if (recognitionInstance) {
+      let speechLocale = 'en-US';
+      if (sourceType === 'main') {
+        const lang = getLanguage(state.srcLang);
+        speechLocale = (state.srcLang === 'auto') ? (navigator.language || 'en-US') : (lang.speech || 'en-US');
+      } else if (sourceType === 'convA') {
+        speechLocale = getLanguage(state.convLangA).speech || 'en-US';
+      } else if (sourceType === 'convB') {
+        speechLocale = getLanguage(state.convLangB).speech || 'es-ES';
+      }
+
+      recognitionInstance.lang = speechLocale;
+
+      try {
+        recognitionInstance.start();
+      } catch (e) {
+        console.warn('Recognition start exception:', e);
+      }
     }
   }
 
   function stopRecording() {
+    if (!state.isRecording) return;
     state.isRecording = false;
     playChime('stop');
-    updateMicUI(false);
-    stopAudioVisualizer();
+
+    clearInterval(state.recordingTimerId);
+    state.recordingTimerId = null;
+
+    if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+      try {
+        state.mediaRecorder.stop();
+      } catch (e) {}
+    }
 
     if (recognitionInstance) {
       try {
         recognitionInstance.stop();
       } catch (e) {}
     }
+
+    updateMicUI(false);
+    stopAudioVisualizer();
+
+    // After recording stops, immediately translate into the selected target language!
+    setTimeout(() => {
+      const text = el.sourceTextInput.value.trim();
+      if (text) {
+        triggerTranslation(true);
+        showToast(`Voice recorded! Translating into ${getLanguage(state.tgtLang).name}...`, '✨');
+      } else {
+        showToast('Voice recorded! You can type words or choose a language to translate.', '🎙️');
+      }
+    }, 350);
   }
 
   function updateMicUI(isRecording) {
     if (state.activeRecordingSource === 'main') {
       if (isRecording) {
         el.mainMicBtn.classList.add('recording');
+        if (el.mainMicIcon) el.mainMicIcon.textContent = '⏹️';
         el.voiceStatusLabel.classList.add('recording');
-        el.voiceStatusText.textContent = `Listening in ${getLanguage(state.srcLang).name}... Speak now!`;
+        el.voiceStatusText.textContent = `🔴 Recording voice in ${getLanguage(state.srcLang).name}... Click Stop to Translate`;
         el.srcPanelCard.classList.add('active-recording');
-        el.visualizerContainer.classList.add('active');
+        if (el.visualizerContainer) el.visualizerContainer.classList.add('active');
       } else {
         el.mainMicBtn.classList.remove('recording');
+        if (el.mainMicIcon) el.mainMicIcon.textContent = '🎙️';
         el.voiceStatusLabel.classList.remove('recording');
-        el.voiceStatusText.textContent = 'Click mic or press Space to speak in any language';
+        el.voiceStatusText.textContent = 'Voice recorded! Select any language below to translate';
         el.srcPanelCard.classList.remove('active-recording');
-        el.visualizerContainer.classList.remove('active');
-        el.interimSpeechBox.style.display = 'none';
+        if (el.visualizerContainer) el.visualizerContainer.classList.remove('active');
+        if (el.interimSpeechBox) el.interimSpeechBox.style.display = 'none';
+        if (el.recordingTimer) el.recordingTimer.style.display = 'none';
       }
     } else if (state.activeRecordingSource === 'convA') {
       if (isRecording) {
@@ -598,15 +700,14 @@
   }
 
   // --- AUDIO VISUALIZER (CANVAS WAVEFORM) ---
-  function startAudioVisualizer() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  function startAudioVisualizerFromStream(stream) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
 
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      state.audioStream = stream;
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-
-      state.audioContext = new AudioCtx();
+    try {
+      if (!state.audioContext || state.audioContext.state === 'closed') {
+        state.audioContext = new AudioCtx();
+      }
       state.analyser = state.audioContext.createAnalyser();
       state.analyser.fftSize = 64;
 
@@ -614,9 +715,41 @@
       source.connect(state.analyser);
 
       drawWaveform();
-    }).catch(err => {
-      console.warn('Visualizer mic stream denied:', err);
-    });
+    } catch (e) {
+      console.warn('Visualizer setup error:', e);
+    }
+  }
+
+  // --- RECORDED AUDIO PLAYBACK ---
+  function togglePlayRecordedAudio() {
+    if (!el.recordedAudioElement || !state.recordedAudioUrl) return;
+
+    if (el.recordedAudioElement.paused) {
+      el.recordedAudioElement.play().then(() => {
+        state.isRecordedAudioPlaying = true;
+        if (el.playRecordedAudioIcon) el.playRecordedAudioIcon.textContent = '⏸️';
+        if (el.playRecordedAudioText) el.playRecordedAudioText.textContent = 'Pause My Voice';
+      }).catch(err => {
+        console.warn('Audio play error:', err);
+      });
+    } else {
+      el.recordedAudioElement.pause();
+      state.isRecordedAudioPlaying = false;
+      if (el.playRecordedAudioIcon) el.playRecordedAudioIcon.textContent = '▶';
+      if (el.playRecordedAudioText) el.playRecordedAudioText.textContent = 'Play My Voice';
+    }
+  }
+
+  function deleteRecordedAudio() {
+    if (state.recordedAudioUrl) {
+      URL.revokeObjectURL(state.recordedAudioUrl);
+      state.recordedAudioUrl = null;
+    }
+    state.recordedAudioBlob = null;
+    state.recordedChunks = [];
+    if (el.recordedAudioElement) el.recordedAudioElement.src = '';
+    if (el.recordedAudioBar) el.recordedAudioBar.style.display = 'none';
+    showToast('Voice recording cleared', '🗑️');
   }
 
   function drawWaveform() {
@@ -1107,6 +1240,33 @@
     el.mainMicBtn.addEventListener('click', () => {
       startSpeechRecognition('main');
     });
+
+    // Recorded Audio Playback & Actions
+    if (el.playRecordedAudioBtn) {
+      el.playRecordedAudioBtn.addEventListener('click', togglePlayRecordedAudio);
+    }
+    if (el.deleteRecordedAudioBtn) {
+      el.deleteRecordedAudioBtn.addEventListener('click', deleteRecordedAudio);
+    }
+    if (el.recordedAudioElement) {
+      el.recordedAudioElement.addEventListener('ended', () => {
+        state.isRecordedAudioPlaying = false;
+        if (el.playRecordedAudioIcon) el.playRecordedAudioIcon.textContent = '▶';
+        if (el.playRecordedAudioText) el.playRecordedAudioText.textContent = 'Play My Voice';
+      });
+    }
+
+    // Direct Translate Action Button
+    if (el.mainTranslateActionBtn) {
+      el.mainTranslateActionBtn.addEventListener('click', () => {
+        const text = el.sourceTextInput.value.trim();
+        if (!text) {
+          showToast('Please record voice or type words first.', '🎙️');
+          return;
+        }
+        triggerTranslation(true);
+      });
+    }
 
     // Conversation Mic Buttons
     el.convMicBtnA.addEventListener('click', () => startSpeechRecognition('convA'));

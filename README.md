@@ -8,11 +8,13 @@ A modern, fast, and feature-packed voice and text translator web application sup
 
 ## 🌟 Key Features
 
-- 🎙️ **Voice Translation ("Voice Way")**:
-  - Speak naturally in any language with microphone speech recognition.
-  - Real-time animated audio waveform visualizer powered by the Web Audio API.
-  - Instant Text-To-Speech (TTS) audio playback with voice speed control (0.8x, 1.0x, 1.2x).
-  - Auto-Speak mode: instantly pronounces the translated output aloud as soon as speaking completes.
+- 🎙️ **Voice Recording & Translation ("Voice Way")**:
+  - **Live Voice Recording**: Record your voice in any language with MediaRecorder and continuous speech recognition.
+  - **Live Timer & Waveform**: See real-time recording timer (`00:03...`) and animated audio waveform visualizer.
+  - **Play My Recorded Voice**: Play back, pause, and verify your original recorded audio clip directly in the browser.
+  - **Post-Recording Instant Language Translation**: Record your voice once, then select ANY language to translate into instantly without re-recording!
+  - **Voice Output**: Instant Text-To-Speech (TTS) audio playback with voice speed control (`0.8x`, `1.0x`, `1.2x`).
+  - **Auto-Speak mode**: Automatically pronounces the translation out loud as soon as recording finishes.
 
 - 📝 **Words Translation ("Words Way")**:
   - Live side-by-side / dual card view showing original words and translated words.

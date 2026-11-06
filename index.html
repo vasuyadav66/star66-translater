@@ -59,9 +59,13 @@
     <main id="standardTranslatorView">
       <!-- Language Selector Bar -->
       <section class="language-selector-bar">
-        <!-- Source Language Picker -->
+        <!-- Source Language Picker (Step 1) -->
         <div class="lang-picker-group">
-          <button class="lang-dropdown-btn" id="srcLangBtn" aria-label="Select source language">
+          <div class="lang-step-label">
+            <span class="step-num">1</span>
+            <span>Your Voice / Input Language</span>
+          </div>
+          <button class="lang-dropdown-btn" id="srcLangBtn" aria-label="Select source speaking language">
             <span style="display:flex; align-items:center; gap:8px;">
               <span class="lang-flag" id="srcLangFlag">✨</span>
               <span id="srcLangName">Auto Detect</span>
@@ -79,8 +83,12 @@
           ⇄
         </button>
 
-        <!-- Target Language Picker -->
+        <!-- Target Language Picker (Step 2) -->
         <div class="lang-picker-group">
+          <div class="lang-step-label">
+            <span class="step-num">2</span>
+            <span>Translate Into Language</span>
+          </div>
           <button class="lang-dropdown-btn" id="tgtLangBtn" aria-label="Select target language">
             <span style="display:flex; align-items:center; gap:8px;">
               <span class="lang-flag" id="tgtLangFlag">🇪🇸</span>
@@ -95,18 +103,49 @@
         </div>
       </section>
 
-      <!-- Center Voice Control -->
+      <!-- Center Voice Control Area -->
       <section class="center-voice-control">
         <div class="mic-hero-container">
-          <button class="mic-hero-btn" id="mainMicBtn" title="Click or Press Spacebar to Speak">
-            🎙️
+          <button class="mic-hero-btn" id="mainMicBtn" title="Click or Press Spacebar to Record Voice">
+            <span id="mainMicIcon">🎙️</span>
           </button>
           <div class="mic-ripple-ring"></div>
         </div>
+
         <div class="voice-status-label" id="voiceStatusLabel">
           <span class="status-dot"></span>
-          <span id="voiceStatusText">Click mic or press Space to speak in any language</span>
+          <span id="voiceStatusText">Click mic to record your voice & language</span>
+          <span class="recording-timer" id="recordingTimer" style="display:none;">00:00</span>
         </div>
+
+        <!-- Live Waveform Canvas -->
+        <div class="canvas-visualizer-container" id="visualizerContainer">
+          <canvas id="audioVisualizer"></canvas>
+        </div>
+
+        <!-- Recorded Audio Player Bar -->
+        <div class="recorded-audio-bar" id="recordedAudioBar" style="display:none;">
+          <div class="recorded-audio-info">
+            <span class="recorded-icon">🔊</span>
+            <div>
+              <div class="recorded-title">Your Recorded Voice</div>
+              <div class="recorded-meta" id="recordedAudioMeta">Audio captured · Ready to play & translate</div>
+            </div>
+          </div>
+          <div class="recorded-audio-controls">
+            <button class="action-btn primary-btn" id="playRecordedAudioBtn" style="padding:6px 14px; font-size:12px;">
+              <span id="playRecordedAudioIcon">▶</span> <span id="playRecordedAudioText">Play My Voice</span>
+            </button>
+            <button class="icon-btn" id="deleteRecordedAudioBtn" title="Clear recording">✕</button>
+          </div>
+          <audio id="recordedAudioElement" style="display:none;"></audio>
+        </div>
+
+        <!-- Direct Translate Action Button -->
+        <button class="translate-action-hero" id="mainTranslateActionBtn">
+          <span>⚡</span>
+          <span id="mainTranslateActionText">Translate Voice Now → Spanish</span>
+        </button>
       </section>
 
       <!-- Translator Cards Grid -->
@@ -128,16 +167,11 @@
             <textarea 
               class="source-textarea" 
               id="sourceTextInput" 
-              placeholder="Speak using the microphone or type any words in any language..." 
+              placeholder="Record your voice with the mic above, or type words in any language..." 
               spellcheck="false"></textarea>
 
             <div class="interim-speech-box" id="interimSpeechBox">
               Listening...
-            </div>
-
-            <!-- Waveform Canvas -->
-            <div class="canvas-visualizer-container" id="visualizerContainer">
-              <canvas id="audioVisualizer"></canvas>
             </div>
           </div>
 
