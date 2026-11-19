@@ -31,8 +31,14 @@
     history: JSON.parse(localStorage.getItem('star66_history') || '[]'),
     activeModalType: 'src', // 'src', 'tgt', 'convA', 'convB'
     translateDebounceTimer: null,
+    typingAutoSpeakTimer: null,
     availableVoices: []
   };
+
+  // --- ZERO-LAG IN-MEMORY TRANSLATION CACHE & CONTROLLERS ---
+  const translationCache = new Map();
+  let currentTranslationSeq = 0;
+  let translationAbortController = null;
 
   // --- POPULAR LANGUAGES FOR QUICK CHIPS ---
   const POPULAR_CODES = ['en', 'es', 'hi', 'fr', 'de', 'zh-CN', 'ja', 'ar', 'ru', 'pt'];
@@ -100,6 +106,7 @@
     detectedLangBadge: document.getElementById('detectedLangBadge'),
 
     tgtPanelCard: document.getElementById('tgtPanelCard'),
+    translatingIndicator: document.getElementById('translatingIndicator'),
     translationOutputText: document.getElementById('translationOutputText'),
     phoneticsDisplay: document.getElementById('phoneticsDisplay'),
     autoSpeakCheckbox: document.getElementById('autoSpeakCheckbox'),
@@ -341,19 +348,25 @@
     showToast(`Swapped to ${getLanguage(newSrc).name} → ${getLanguage(newTgt).name}`);
   }
 
-  // --- TRANSLATION API (PRIMARY + FALLBACK) ---
-  async function performTranslation(text, sourceLang, targetLang) {
+  // --- ZERO-LAG TRANSLATION API (PRIMARY + FALLBACK WITH CACHE & ABORT) ---
+  async function performTranslation(text, sourceLang, targetLang, abortSignal = null) {
     if (!text || !text.trim()) {
-      return { translatedText: '', detectedSource: null };
+      return { translatedText: '', detectedSource: null, phonetics: '' };
     }
 
     const sl = sourceLang === 'auto' ? 'auto' : sourceLang;
     const tl = targetLang;
+    const cacheKey = `${sl}:${tl}:${text.trim()}`;
+
+    // 0ms Cache Return
+    if (translationCache.has(cacheKey)) {
+      return translationCache.get(cacheKey);
+    }
 
     // 1. Primary Engine: Google Translate GTX Endpoint
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(sl)}&tl=${encodeURIComponent(tl)}&dt=t&dt=bd&dt=rm&q=${encodeURIComponent(text)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: abortSignal || undefined });
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const data = await res.json();
 
@@ -364,7 +377,6 @@
 
       const detected = (data && data[2]) ? data[2] : null;
 
-      // Extract phonetics / transliteration if available
       let phonetics = '';
       if (data && data[0] && data[0].length > 1) {
         const lastPart = data[0][data[0].length - 1];
@@ -375,12 +387,16 @@
         }
       }
 
-      return {
+      const resObj = {
         translatedText: translated,
         detectedSource: detected,
         phonetics: phonetics
       };
+
+      translationCache.set(cacheKey, resObj);
+      return resObj;
     } catch (err) {
+      if (err.name === 'AbortError') throw err;
       console.warn('Primary translation API unreachable, trying fallback...', err);
     }
 
@@ -388,85 +404,139 @@
     try {
       const pair = `${sl === 'auto' ? 'en' : sl}|${tl}`;
       const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(pair)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: abortSignal || undefined });
       const data = await res.json();
       if (data && data.responseData && data.responseData.translatedText) {
-        return {
+        const resObj = {
           translatedText: data.responseData.translatedText,
           detectedSource: null,
           phonetics: ''
         };
+        translationCache.set(cacheKey, resObj);
+        return resObj;
       }
     } catch (fallbackErr) {
+      if (fallbackErr.name === 'AbortError') throw fallbackErr;
       console.error('All translation engines failed:', fallbackErr);
     }
 
     throw new Error('Unable to translate. Please check your internet connection.');
   }
 
-  // --- TRIGGER TRANSLATION (DEBOUNCED) ---
-  function triggerTranslation(immediate = false) {
-    clearTimeout(state.translateDebounceTimer);
+  function applyTranslationResult(result, text) {
+    if (!result || typeof result.translatedText === 'undefined') return;
+    el.translationOutputText.textContent = result.translatedText;
+    el.targetWordCount.textContent = `${result.translatedText.length} chars`;
 
-    const text = el.sourceTextInput.value.trim();
-    updateWordCounts(text);
+    if (result.phonetics) {
+      el.phoneticsDisplay.textContent = `Phonetic: ${result.phonetics}`;
+      el.phoneticsDisplay.style.display = 'block';
+    } else {
+      el.phoneticsDisplay.style.display = 'none';
+    }
+
+    if (state.srcLang === 'auto' && result.detectedSource) {
+      state.detectedLang = result.detectedSource;
+      const detected = getLanguage(result.detectedSource);
+      el.detectedLangBadge.textContent = `Detected: ${detected.name}`;
+      el.detectedLangBadge.style.display = 'inline-block';
+    } else {
+      el.detectedLangBadge.style.display = 'none';
+    }
+
+    saveHistoryItem({
+      sourceText: text,
+      translatedText: result.translatedText,
+      sourceLang: state.srcLang === 'auto' ? (state.detectedLang || 'auto') : state.srcLang,
+      targetLang: state.tgtLang,
+      timestamp: Date.now()
+    });
+  }
+
+  function showTranslatingIndicator() {
+    if (el.translatingIndicator) el.translatingIndicator.classList.add('active');
+  }
+
+  function hideTranslatingIndicator() {
+    if (el.translatingIndicator) el.translatingIndicator.classList.remove('active');
+  }
+
+  // --- TRIGGER TRANSLATION (ZERO-LAG ULTRA-FAST ENGINE) ---
+  function triggerTranslation(immediate = false, autoSpeak = false, customDebounce = null) {
+    clearTimeout(state.translateDebounceTimer);
+    clearTimeout(state.typingAutoSpeakTimer);
+
+    const rawText = el.sourceTextInput.value;
+    const text = rawText.trim();
+    updateWordCounts(rawText);
 
     if (!text) {
+      if (translationAbortController) {
+        try { translationAbortController.abort(); } catch (e) {}
+        translationAbortController = null;
+      }
       el.translationOutputText.innerHTML = '<span class="translation-placeholder">Translation will appear here in the chosen language...</span>';
       el.phoneticsDisplay.style.display = 'none';
       el.detectedLangBadge.style.display = 'none';
       el.targetWordCount.textContent = '0 chars';
+      hideTranslatingIndicator();
       return;
     }
 
+    const cacheKey = `${state.srcLang === 'auto' ? 'auto' : state.srcLang}:${state.tgtLang}:${text}`;
+    if (translationCache.has(cacheKey)) {
+      const cached = translationCache.get(cacheKey);
+      applyTranslationResult(cached, text);
+      hideTranslatingIndicator();
+      if (autoSpeak || (state.autoSpeak && !state.isRecording)) {
+        speakTargetVoice();
+      }
+      return;
+    }
+
+    showTranslatingIndicator();
+
     const run = async () => {
+      currentTranslationSeq++;
+      const seq = currentTranslationSeq;
+
+      if (translationAbortController) {
+        try { translationAbortController.abort(); } catch (e) {}
+      }
+      translationAbortController = new AbortController();
+
       try {
-        el.translationOutputText.innerHTML = '<span style="color:var(--text-dim); font-style:italic;">Translating across world neural networks...</span>';
+        const result = await performTranslation(text, state.srcLang, state.tgtLang, translationAbortController.signal);
+        if (seq === currentTranslationSeq) {
+          applyTranslationResult(result, text);
+          hideTranslatingIndicator();
 
-        const result = await performTranslation(text, state.srcLang, state.tgtLang);
-        el.translationOutputText.textContent = result.translatedText;
-        el.targetWordCount.textContent = `${result.translatedText.length} chars`;
-
-        // Update phonetics if present
-        if (result.phonetics) {
-          el.phoneticsDisplay.textContent = `Phonetic: ${result.phonetics}`;
-          el.phoneticsDisplay.style.display = 'block';
-        } else {
-          el.phoneticsDisplay.style.display = 'none';
-        }
-
-        // Show detected language badge
-        if (state.srcLang === 'auto' && result.detectedSource) {
-          state.detectedLang = result.detectedSource;
-          const detected = getLanguage(result.detectedSource);
-          el.detectedLangBadge.textContent = `Detected: ${detected.name}`;
-          el.detectedLangBadge.style.display = 'inline-block';
-        } else {
-          el.detectedLangBadge.style.display = 'none';
-        }
-
-        // Save to History
-        saveHistoryItem({
-          sourceText: text,
-          translatedText: result.translatedText,
-          sourceLang: state.srcLang === 'auto' ? (state.detectedLang || 'auto') : state.srcLang,
-          targetLang: state.tgtLang,
-          timestamp: Date.now()
-        });
-
-        // Auto Speak Voice if enabled
-        if (state.autoSpeak && !state.isRecording) {
-          speakTargetVoice();
+          if (autoSpeak || (state.autoSpeak && !state.isRecording)) {
+            speakTargetVoice();
+          }
         }
       } catch (err) {
-        el.translationOutputText.innerHTML = `<span style="color:#ef4444;">Translation Error: ${err.message}</span>`;
+        if (err.name === 'AbortError') return;
+        if (seq === currentTranslationSeq) {
+          hideTranslatingIndicator();
+          el.translationOutputText.innerHTML = `<span style="color:#ef4444;">Translation Error: ${err.message}</span>`;
+        }
       }
     };
 
     if (immediate) {
       run();
     } else {
-      state.translateDebounceTimer = setTimeout(run, 400);
+      const isSpaceOrPunct = /[\s.,!?;:\n]$/.test(rawText);
+      const delay = customDebounce !== null ? customDebounce : (isSpaceOrPunct ? 90 : 160);
+      state.translateDebounceTimer = setTimeout(run, delay);
+
+      // If typing and autoSpeak is on, auto-pronounce smoothly 700ms after user pauses typing
+      if (state.autoSpeak && !state.isRecording) {
+        state.typingAutoSpeakTimer = setTimeout(() => {
+          speakTargetVoice();
+        }, 700);
+      }
     }
   }
 
@@ -511,6 +581,8 @@
           const current = el.sourceTextInput.value.trim();
           el.sourceTextInput.value = current ? `${current} ${final}` : final;
           updateWordCounts(el.sourceTextInput.value);
+          // Stream background translation live with zero lag while speaking!
+          triggerTranslation(false, false, 60);
         }
       } else if (state.activeRecordingSource === 'convA') {
         if (final) {
@@ -649,16 +721,14 @@
     updateMicUI(false);
     stopAudioVisualizer();
 
-    // After recording stops, immediately translate into the selected target language!
-    setTimeout(() => {
-      const text = el.sourceTextInput.value.trim();
-      if (text) {
-        triggerTranslation(true);
-        showToast(`Voice recorded! Translating into ${getLanguage(state.tgtLang).name}...`, '✨');
-      } else {
-        showToast('Voice recorded! You can type words or choose a language to translate.', '🎙️');
-      }
-    }, 350);
+    // Zero-lag immediate translation and speaker voice!
+    const text = el.sourceTextInput.value.trim();
+    if (text) {
+      triggerTranslation(true, true);
+      showToast(`Voice translated into ${getLanguage(state.tgtLang).name}!`, '⚡');
+    } else {
+      showToast('Voice recorded! You can type words or choose a language to translate.', '🎙️');
+    }
   }
 
   function updateMicUI(isRecording) {
@@ -827,21 +897,25 @@
   }
 
   function speakVoice(text, langCode, onEndCallback = null) {
-    if (!text || !('speechSynthesis' in window)) return;
+    if (!text || text.includes('Translation will appear here') || !('speechSynthesis' in window)) return;
 
-    window.speechSynthesis.cancel(); // Stop any pending speech
+    const synth = window.speechSynthesis;
+    try {
+      if (synth.paused) synth.resume();
+      synth.cancel(); // Stop any pending speech immediately
+    } catch (e) {}
 
     const utterance = new SpeechSynthesisUtterance(text);
     const lang = getLanguage(langCode);
     const targetTag = (lang.speech || langCode || 'en-US').toLowerCase();
 
     utterance.lang = targetTag;
-    utterance.rate = state.speechRate;
+    utterance.rate = state.speechRate || 1.0;
     utterance.pitch = 1.0;
 
     // Pick best matching voice
-    if (state.availableVoices.length > 0) {
-      const exactVoice = state.availableVoices.find(v => v.lang.toLowerCase() === targetTag);
+    if (state.availableVoices && state.availableVoices.length > 0) {
+      const exactVoice = state.availableVoices.find(v => v.lang.toLowerCase() === targetTag || v.lang.toLowerCase().replace('_', '-') === targetTag);
       const prefixVoice = state.availableVoices.find(v => v.lang.toLowerCase().startsWith(targetTag.split('-')[0]));
       if (exactVoice) {
         utterance.voice = exactVoice;
@@ -850,16 +924,27 @@
       }
     }
 
+    if (el.speakTargetBtn) el.speakTargetBtn.classList.add('speaking-active');
+
     utterance.onend = () => {
+      if (el.speakTargetBtn) el.speakTargetBtn.classList.remove('speaking-active');
       if (onEndCallback) onEndCallback();
     };
 
     utterance.onerror = (e) => {
-      console.warn('Speech synthesis error:', e);
+      if (el.speakTargetBtn) el.speakTargetBtn.classList.remove('speaking-active');
       if (onEndCallback) onEndCallback();
     };
 
-    window.speechSynthesis.speak(utterance);
+    // Micro-tick dispatch ensures audio thread does not choke
+    setTimeout(() => {
+      try {
+        if (synth.paused) synth.resume();
+        synth.speak(utterance);
+      } catch (err) {
+        console.warn('Speech synthesis error:', err);
+      }
+    }, 10);
   }
 
   function speakTargetVoice() {
@@ -1264,7 +1349,7 @@
           showToast('Please record voice or type words first.', '🎙️');
           return;
         }
-        triggerTranslation(true);
+        triggerTranslation(true, true);
       });
     }
 
@@ -1272,20 +1357,32 @@
     el.convMicBtnA.addEventListener('click', () => startSpeechRecognition('convA'));
     el.convMicBtnB.addEventListener('click', () => startSpeechRecognition('convB'));
 
-    // Text Input Events
-    el.sourceTextInput.addEventListener('input', () => triggerTranslation(false));
+    // Text Input Events - Ultra-responsive Zero Lag
+    el.sourceTextInput.addEventListener('input', () => {
+      triggerTranslation(false, false);
+    });
+
+    el.sourceTextInput.addEventListener('keydown', (e) => {
+      // Enter key translates immediately and speaks!
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        triggerTranslation(true, true);
+      }
+    });
+
     el.clearTextBtn.addEventListener('click', () => {
       el.sourceTextInput.value = '';
-      triggerTranslation(true);
+      triggerTranslation(true, false);
       el.sourceTextInput.focus();
     });
+
     el.pasteTextBtn.addEventListener('click', async () => {
       try {
         const text = await navigator.clipboard.readText();
         if (text) {
           el.sourceTextInput.value = text;
-          triggerTranslation(true);
-          showToast('Pasted from clipboard');
+          triggerTranslation(true, state.autoSpeak);
+          showToast('Pasted & translating instantly', '⚡');
         }
       } catch (e) {
         showToast('Clipboard access required', '⚠️');
